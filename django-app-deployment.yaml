@@ -1,0 +1,110 @@
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: django-db-credentials
+data:
+  username: djangogo
+  password: Mzk1MjgkdmRnN0pi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: django
+  labels:
+    app: django
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 4000
+  selector:
+    app: django
+    tier: frontend
+---
+apiVersion: apps/v1beta2
+kind: StatefulSet
+metadata:
+  name: django
+  labels:
+    app: django
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: django
+      tier: frontend
+  serviceName: django
+  template:
+    metadata:
+      labels:
+        app: django
+        tier: frontend
+    spec:
+      containers:
+      - image: sophomeric/django:1.0
+        name: django
+        env:
+        - name: DJANGO_DB_USER
+          valueFrom:
+            secretKeyRef:
+                name: django-db-credentials
+                key: username
+        - name: DJANGO_DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+                name: django-db-credentials
+                key: password
+        ports:
+        - containerPort: 4000
+          name: django
+        volumeMounts:
+        - name: django-persistent-storage
+          mountPath: /data/django-db
+        livenessProbe:
+          exec:
+            command:
+            - timeout
+            - -k
+            - 10s
+            - 10s
+            - curl
+            - -s
+            - -o
+            - /dev/null
+            - http://127.0.0.1:4000/api
+          initialDelaySeconds: 5
+          periodSeconds: 15
+        readinessProbe:
+          exec:
+            command:
+            - curl
+            - -s
+            - -o
+            - /dev/null
+            - -IL
+            - http://127.0.0.1:4000/api/
+          initialDelaySeconds: 5
+          periodSeconds: 5
+  volumeClaimTemplates:
+  - metadata:
+      name: django-persistent-storage
+    spec:
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: 1Gi
+---
+apiVersion: autoscaling/v1
+kind: HorizontalPodAutoscaler
+metadata:
+  name: django
+  namespace: default
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: django
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 50
